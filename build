@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ "$(id -u)" = "0" ]; then
+   echo "build - This script should not be run as root!" 1>&2
+   exit 1
+fi
+
+# Make dst output dir
+[ -d dst ] || mkdir dst
+
+echo "Building TypeScript to ./dst"
+
+TSC="tsc"
+
+if ! which tsc > /dev/null ; then
+    TSC="./node_modules/.bin/tsc"
+fi
+
+"$TSC" -m commonjs -t ES5 --sourcemap --declaration --outDir ./dst ./src/*.ts
+
+echo "Done Build!"

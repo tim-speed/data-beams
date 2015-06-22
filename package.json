@@ -1,0 +1,36 @@
+{
+  "name": "data-beams",
+  "version": "0.0.1",
+  "description": "Simple node based data transfer Server / Client",
+  "main": "dst/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tim-speed/data-beams.git"
+  },
+  "keywords": [
+    "node",
+    "nodejs",
+    "file",
+    "files",
+    "transfer",
+    "ftp"
+  ],
+  "author": "Tim Speed",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/tim-speed/data-beams/issues"
+  },
+  "homepage": "https://github.com/tim-speed/data-beams",
+  "engines": {
+    "node": ">= 0.12.2"
+  },
+  "dependencies": {
+    "source-map-support": "^0.2.10"
+  },
+  "devDependencies": {
+    "typescript": "1.4.1"
+  }
+}

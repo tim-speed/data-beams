@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "outDir": "./dst/",
+        "module": "commonjs",
+        "sourceMap": true,
+        "declaration": true,
+        "target": "es5"
+    },
+    "files": [
+        "./src/index.ts"
+    ],
+    "filesGlob": [
+        "./src/*.ts"
+    ]
+}

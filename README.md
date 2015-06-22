@@ -1,2 +1,2 @@
-# file-beams
-Simple node based FTP Server / Client
+# data-beams
+Simple node based packet transfer Server / Client

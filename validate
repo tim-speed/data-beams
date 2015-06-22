@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Make dst output dir
+[ -d temp ] || mkdir temp
+
+# Note we trick tsc by telling it to write to /dev/null then filtering out the errors from this
+# Be aware that using the single out file will still output in place
+echo "Validating project with TypeScript..."
+
+TSC="tsc"
+
+if ! which tsc > /dev/null ; then
+    TSC="./node_modules/.bin/tsc"
+fi
+
+#./node_modules/.bin/tsc -m commonjs -t ES5 --outDir /dev/null ./src/*.ts | grep -v '^error TS5033: Could not write file '
+declare RESULT=$("$TSC" -m commonjs -t ES5 --sourcemap --outDir ./temp ./src/*.ts)
+
+if [ -z "$RESULT" ]; then
+    echo "No Errors"
+else
+    echo "$RESULT"
+fi
+
+# Cleanup
+rm -rf temp
