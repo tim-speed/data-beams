@@ -3,42 +3,43 @@ declare module "data-beams" {
     import stream = require('stream');
     import events = require('events');
     import net = require('net');
-
     export var MAX_SAFE_INT: number;
     export var MAX_UINT_32: number;
     export var MAX_PACKET_SIZE: number;
-
     export class TransferIn extends stream.Readable {
         id: number;
         complete: boolean;
         _received: number;
         _push: (chunk: any, encoding?: string) => boolean;
         _data: NodeBuffer[];
+        _readLimit: number;
         constructor(id: number);
-        addData(data: NodeBuffer): boolean;
+        addData(data: NodeBuffer): void;
+        _checkEnd(): boolean;
+        _sendData(): void;
+        _read(size: number): void;
         end(): void;
     }
-
     export class TransferOut extends events.EventEmitter {
         id: number;
         socket: net.Socket;
         start(id: number, socket: net.Socket): void;
-        sendData(buffer: NodeBuffer): void;
+        sendData(buffer: NodeBuffer, cb?: () => void): void;
         transfer(): void;
     }
-
     export class BufferTransferOut extends TransferOut {
         data: NodeBuffer;
         constructor(data: NodeBuffer);
         transfer(): void;
     }
-
     export class StreamingTransferOut extends TransferOut {
         stream: stream.Readable;
+        _packetsPushed: number;
+        _packetsSent: number;
+        _ended: boolean;
         constructor(stream: stream.Readable);
         transfer(): void;
     }
-
     export class Connection extends events.EventEmitter {
         id: number;
         socket: net.Socket;
@@ -60,7 +61,6 @@ declare module "data-beams" {
         close(): void;
         destroy(): void;
     }
-
     export class Server extends events.EventEmitter {
         port: number;
         server: net.Server;
@@ -71,7 +71,6 @@ declare module "data-beams" {
         constructor(port?: number);
         listen(): void;
     }
-
     export class Client extends Connection {
         address: string;
         port: number;
