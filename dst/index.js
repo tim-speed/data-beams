@@ -12,41 +12,65 @@ var debug = require('./debug');
 exports.MAX_SAFE_INT = 9007199254740991;
 exports.MAX_UINT_32 = 0xFFFFFFFF;
 exports.MAX_PACKET_SIZE = 0xFFFF; // 16 bit UINT MAX
-var dbgTransferIn = debug('TransferIn');
-// TODO: Limit the amount this buffers or else we will run out of the memory
-var TransferIn = (function (_super) {
-    __extends(TransferIn, _super);
-    function TransferIn(id) {
+var ArrayBufferedStream = (function (_super) {
+    __extends(ArrayBufferedStream, _super);
+    function ArrayBufferedStream() {
         _super.call(this);
-        this.id = id;
-        this.complete = false;
+        // By default buffer slicing is off so that we don't screw up message packets and so they don't have to measure their own length
+        this.allowSlicing = false;
+        this.writable = true;
+        this._ended = false;
         this._received = 0;
         this._data = [];
         this._readLimit = 0;
-        dbgTransferIn('Starting inbound transfer %d.', this.id);
     }
-    TransferIn.prototype.addData = function (data) {
+    ArrayBufferedStream.prototype.write = function (data, encodingOrCb, cb) {
+        var encoding = 'utf8';
+        if (typeof encodingOrCb === 'function') {
+            cb = encodingOrCb;
+        }
+        else if (typeof encodingOrCb === 'string') {
+            encoding = encoding;
+        }
+        if (typeof data === 'string') {
+            data = new Buffer(data, encoding);
+        }
         this._data.push(data);
         this._received += data.length;
-        dbgTransferIn('Continuing inbound transfer %d, received %d bytes (total %d).', this.id, data.length, this._received);
+        this._sendData();
+        cb && setImmediate(cb);
+        return true;
+    };
+    ArrayBufferedStream.prototype.end = function (data, encodingOrCb, cb) {
+        if (this._ended) {
+            cb && setImmediate(cb);
+            return;
+        }
+        if (data) {
+            this.write(data, encodingOrCb, cb);
+        }
+        this.writable = false;
+        this._ended = true;
+        // Send any remaining data up to the amount specified by _read if we can
         this._sendData();
     };
-    TransferIn.prototype._checkEnd = function () {
-        if (this.complete && this._data.length === 0) {
+    ArrayBufferedStream.prototype._checkEnd = function () {
+        if (this._ended && this._data.length === 0) {
             this.push(null);
-            dbgTransferIn('Inbound transfer %d finished, requested %d bytes, pushing null.', this.id, this._readLimit);
             return true;
         }
         return false;
     };
-    TransferIn.prototype._sendData = function () {
-        if (this._checkEnd())
+    ArrayBufferedStream.prototype._sendData = function () {
+        if (this._checkEnd()) {
             return;
+        }
         var read = 0;
         var buffer;
         var remaining = Math.max(this._readLimit, 0);
         while (remaining && (buffer = this._data[0])) {
-            if (buffer.length > remaining) {
+            // TODO: Decide if we should push it all out as we are when slicing is disabled, or wait till remaining is >=
+            if (this.allowSlicing && buffer.length > remaining) {
                 // cut up the buffer and put the rest back in queue
                 this._data[0] = buffer.slice(remaining);
                 buffer = buffer.slice(0, remaining);
@@ -61,23 +85,28 @@ var TransferIn = (function (_super) {
             // Update the remaining amount of bytes we should read
             remaining = this._readLimit - read;
         }
-        dbgTransferIn('Reading inbound transfer %d, requested %d bytes (provided %d).', this.id, this._readLimit, read);
         // Update the read limit
         this._readLimit -= read;
-        // Send push null if needed
         this._checkEnd();
     };
-    TransferIn.prototype._read = function (size) {
+    ArrayBufferedStream.prototype._read = function (size) {
         this._readLimit = size;
         this._sendData();
     };
-    TransferIn.prototype.end = function () {
-        dbgTransferIn('Ending inbound transfer %d.', this.id);
-        this.complete = true;
-        this._sendData();
-    };
-    return TransferIn;
+    return ArrayBufferedStream;
 })(stream.Readable);
+exports.ArrayBufferedStream = ArrayBufferedStream;
+var dbgTransferIn = debug('TransferIn');
+// TODO: Limit the amount this buffers or else we will run out of the memory
+var TransferIn = (function (_super) {
+    __extends(TransferIn, _super);
+    function TransferIn(id) {
+        _super.call(this);
+        this.id = id;
+        dbgTransferIn('Starting inbound transfer %d.', this.id);
+    }
+    return TransferIn;
+})(ArrayBufferedStream);
 exports.TransferIn = TransferIn;
 var XFerOutHeader = new Buffer(7);
 XFerOutHeader.writeUInt8(16 /* Continue */, 0);
@@ -357,7 +386,7 @@ var Connection = (function (_super) {
                     // Take as much data from "data" as we can or until our length is satisfied
                     if (bytesRemainingInBuffer >= currentPacketBytesRemaining) {
                         // This may happen frequently with small transfer blocks
-                        currentPacketTransfer.addData(data.slice(packetOffset, packetOffset + currentPacketBytesRemaining));
+                        currentPacketTransfer.write(data.slice(packetOffset, packetOffset + currentPacketBytesRemaining));
                         packetOffset += currentPacketBytesRemaining;
                         bytesRemainingInBuffer -= currentPacketBytesRemaining;
                         // Done with this transfer packet
@@ -368,7 +397,7 @@ var Connection = (function (_super) {
                     else if (bytesRemainingInBuffer > 0) {
                         // This may happen frequently with really large transfer blocks
                         // Supply what we can
-                        currentPacketTransfer.addData(data.slice(packetOffset));
+                        currentPacketTransfer.write(data.slice(packetOffset));
                         currentPacketBytesRemaining -= bytesRemainingInBuffer;
                         break dataLoop;
                     }

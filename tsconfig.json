@@ -7,6 +7,7 @@
         "target": "es5"
     },
     "files": [
+        "./src/debug.ts",
         "./src/index.ts"
     ],
     "filesGlob": [

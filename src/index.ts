@@ -10,57 +10,94 @@ export var MAX_SAFE_INT = 9007199254740991;
 export var MAX_UINT_32 = 0xFFFFFFFF;
 export var MAX_PACKET_SIZE = 0xFFFF; // 16 bit UINT MAX
 
-var dbgTransferIn = debug('TransferIn');
+export class ArrayBufferedStream extends stream.Readable implements NodeJS.WritableStream {
+    // TODO: Use this as flow control so the buffer doesn't get too big
+    writable: boolean;
+    allowSlicing: boolean;
 
-// TODO: Limit the amount this buffers or else we will run out of the memory
-export class TransferIn extends stream.Readable {
-
-    id: number;
-    complete: boolean;
-
+    _ended: boolean;
     _received: number;
-    _push: (chunk: any, encoding?: string) => boolean;
     _data: NodeBuffer[];
     _readLimit: number;
 
-    constructor(id: number) {
+    constructor() {
         super();
 
-        this.id = id;
-        this.complete = false;
-
+        // By default buffer slicing is off so that we don't screw up message packets and so they don't have to measure their own length
+        this.allowSlicing = false;
+        this.writable = true;
+        this._ended = false;
         this._received = 0;
         this._data = [];
         this._readLimit = 0;
-        dbgTransferIn('Starting inbound transfer %d.', this.id);
     }
 
-    addData(data: NodeBuffer) {
-        this._data.push(data);
-        this._received += data.length;
-        dbgTransferIn('Continuing inbound transfer %d, received %d bytes (total %d).', this.id, data.length, this._received);
+    write(buffer: Buffer, cb?: Function): boolean;
+    write(str: string, cb?: Function): boolean;
+    write(str: string, encoding?: string, cb?: Function): boolean;
+    write(data: string|Buffer, encodingOrCb?: Function|string, cb?: Function): boolean {
+        var encoding = 'utf8';
+
+        if (typeof encodingOrCb === 'function') {
+            cb = encodingOrCb;
+        } else if (typeof encodingOrCb === 'string') {
+            encoding = encoding;
+        }
+
+        if (typeof data === 'string') {
+            data = new Buffer(<string>data, encoding);
+        }
+
+
+        this._data.push(<Buffer>data);
+        this._received += (<Buffer>data).length;
+        this._sendData();
+
+        cb && setImmediate(cb);
+
+        return true;
+    }
+
+    end(): void;
+    end(buffer: Buffer, cb?: Function): void;
+    end(str: string, cb?: Function): void;
+    end(str: string, encoding?: string, cb?: Function): void;
+    end(data?: string|Buffer, encodingOrCb?: Function|string, cb?: Function): void {
+        if (this._ended) {
+            cb && setImmediate(cb);
+            return;
+        }
+
+        if (data) {
+            this.write(<string>data, <string>encodingOrCb, cb);
+        }
+
+        this.writable = false;
+        this._ended = true;
+        // Send any remaining data up to the amount specified by _read if we can
         this._sendData();
     }
 
     _checkEnd(): boolean {
-        if (this.complete && this._data.length === 0) {
+        if (this._ended && this._data.length === 0) {
             this.push(null);
-            dbgTransferIn('Inbound transfer %d finished, requested %d bytes, pushing null.', this.id, this._readLimit);
             return true;
         }
         return false;
     }
 
     _sendData() {
-        if (this._checkEnd())
+        if (this._checkEnd()) {
             return;
+        }
 
         var read = 0;
         var buffer: NodeBuffer;
         var remaining = Math.max(this._readLimit, 0);
 
         while (remaining && (buffer = this._data[0])) {
-            if (buffer.length > remaining) {
+            // TODO: Decide if we should push it all out as we are when slicing is disabled, or wait till remaining is >=
+            if (this.allowSlicing && buffer.length > remaining) {
                 // cut up the buffer and put the rest back in queue
                 this._data[0] = buffer.slice(remaining);
                 buffer = buffer.slice(0, remaining);
@@ -76,11 +113,9 @@ export class TransferIn extends stream.Readable {
             // Update the remaining amount of bytes we should read
             remaining = this._readLimit - read;
         }
-        dbgTransferIn('Reading inbound transfer %d, requested %d bytes (provided %d).', this.id, this._readLimit, read);
         // Update the read limit
         this._readLimit -= read;
 
-        // Send push null if needed
         this._checkEnd();
     }
 
@@ -88,11 +123,20 @@ export class TransferIn extends stream.Readable {
         this._readLimit = size;
         this._sendData();
     }
+}
 
-    end(): void {
-        dbgTransferIn('Ending inbound transfer %d.', this.id);
-        this.complete = true;
-        this._sendData();
+var dbgTransferIn = debug('TransferIn');
+
+// TODO: Limit the amount this buffers or else we will run out of the memory
+export class TransferIn extends ArrayBufferedStream {
+
+    id: number;
+
+    constructor(id: number) {
+        super();
+
+        this.id = id;
+        dbgTransferIn('Starting inbound transfer %d.', this.id);
     }
 
 }
@@ -430,7 +474,7 @@ export class Connection extends events.EventEmitter {
                     // Take as much data from "data" as we can or until our length is satisfied
                     if (bytesRemainingInBuffer >= currentPacketBytesRemaining) {
                         // This may happen frequently with small transfer blocks
-                        currentPacketTransfer.addData(data.slice(packetOffset, packetOffset + currentPacketBytesRemaining));
+                        currentPacketTransfer.write(data.slice(packetOffset, packetOffset + currentPacketBytesRemaining));
                         packetOffset += currentPacketBytesRemaining;
                         bytesRemainingInBuffer -= currentPacketBytesRemaining;
                         // Done with this transfer packet
@@ -440,7 +484,7 @@ export class Connection extends events.EventEmitter {
                     } else if (bytesRemainingInBuffer > 0) {
                         // This may happen frequently with really large transfer blocks
                         // Supply what we can
-                        currentPacketTransfer.addData(data.slice(packetOffset));
+                        currentPacketTransfer.write(data.slice(packetOffset));
                         currentPacketBytesRemaining -= bytesRemainingInBuffer;
                         // Maxed out buffer, continue at next packet
                         break dataLoop;
