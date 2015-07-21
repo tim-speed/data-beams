@@ -12,19 +12,25 @@ var debug = require('./debug');
 exports.MAX_SAFE_INT = 9007199254740991;
 exports.MAX_UINT_32 = 0xFFFFFFFF;
 exports.MAX_PACKET_SIZE = 0xFFFF; // 16 bit UINT MAX
+var EMPTY_BUFFER = new Buffer(0);
+var dbgArrayBufferedStream = debug('ArrayBufferedStream');
 var ArrayBufferedStream = (function (_super) {
     __extends(ArrayBufferedStream, _super);
     function ArrayBufferedStream() {
-        _super.call(this);
+        // Specify that this should buffer lots of data 4GB
+        _super.call(this, {
+            highWaterMark: exports.MAX_UINT_32
+        });
         // By default buffer slicing is off so that we don't screw up message packets and so they don't have to measure their own length
-        this.allowSlicing = false;
         this.writable = true;
         this._ended = false;
         this._received = 0;
-        this._data = [];
-        this._readLimit = 0;
     }
     ArrayBufferedStream.prototype.write = function (data, encodingOrCb, cb) {
+        if (this._ended) {
+            cb && setImmediate(cb);
+            return;
+        }
         var encoding = 'utf8';
         if (typeof encodingOrCb === 'function') {
             cb = encodingOrCb;
@@ -35,9 +41,9 @@ var ArrayBufferedStream = (function (_super) {
         if (typeof data === 'string') {
             data = new Buffer(data, encoding);
         }
-        this._data.push(data);
+        dbgArrayBufferedStream('Adding %d bytes of data', data.length);
+        this.push(data);
         this._received += data.length;
-        this._sendData();
         cb && setImmediate(cb);
         return true;
     };
@@ -49,49 +55,13 @@ var ArrayBufferedStream = (function (_super) {
         if (data) {
             this.write(data, encodingOrCb, cb);
         }
+        dbgArrayBufferedStream('Ending stream');
         this.writable = false;
         this._ended = true;
-        // Send any remaining data up to the amount specified by _read if we can
-        this._sendData();
-    };
-    ArrayBufferedStream.prototype._checkEnd = function () {
-        if (this._ended && this._data.length === 0) {
-            this.push(null);
-            return true;
-        }
-        return false;
-    };
-    ArrayBufferedStream.prototype._sendData = function () {
-        if (this._checkEnd()) {
-            return;
-        }
-        var read = 0;
-        var buffer;
-        var remaining = Math.max(this._readLimit, 0);
-        while (remaining && (buffer = this._data[0])) {
-            // TODO: Decide if we should push it all out as we are when slicing is disabled, or wait till remaining is >=
-            if (this.allowSlicing && buffer.length > remaining) {
-                // cut up the buffer and put the rest back in queue
-                this._data[0] = buffer.slice(remaining);
-                buffer = buffer.slice(0, remaining);
-            }
-            else {
-                // Remove the buffer from the list
-                this._data.shift();
-            }
-            // Send this buffer
-            this.push(buffer);
-            read += buffer.length;
-            // Update the remaining amount of bytes we should read
-            remaining = this._readLimit - read;
-        }
-        // Update the read limit
-        this._readLimit -= read;
-        this._checkEnd();
+        this.push(null);
     };
     ArrayBufferedStream.prototype._read = function (size) {
-        this._readLimit = size;
-        this._sendData();
+        // Do nothing, this stream relies on the underlying readable, with an extremely high watermark
     };
     return ArrayBufferedStream;
 })(stream.Readable);
@@ -303,14 +273,14 @@ var Connection = (function (_super) {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
                                     // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
+                                    dbgConnection('Ack - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
                                     packetTrimmings = data.slice(packetOffset - 1);
                                 }
                                 break dataLoop;
                             }
                             // Start our outbound transfer
                             xferId = data.readUInt32BE(packetOffset);
-                            dbgConnection('Read transfer id (%d)', xferId);
+                            dbgConnection('Ack - Read transfer id (%d)', xferId);
                             packetOffset += 4;
                             // This is the transfer id of a packet that we just sent
                             dbgConnection('Remote acknowledged our transfer (%d), starting...', xferId);
@@ -325,14 +295,14 @@ var Connection = (function (_super) {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
                                     // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
+                                    dbgConnection('End - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
                                     packetTrimmings = data.slice(packetOffset - 1);
                                 }
                                 break dataLoop;
                             }
                             // End a running transfer
                             xferId = data.readUInt32BE(packetOffset);
-                            dbgConnection('Read transfer id (%d)', xferId);
+                            dbgConnection('End - Read transfer id (%d)', xferId);
                             packetOffset += 4;
                             // Grab and end the transger
                             xferIn = _.transfersIn[xferId];
@@ -350,14 +320,14 @@ var Connection = (function (_super) {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
                                     // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
+                                    dbgConnection('Continue - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
                                     packetTrimmings = data.slice(packetOffset - 1);
                                 }
                                 break dataLoop;
                             }
                             // Handle incoming packet data for transfer
                             xferId = data.readUInt32BE(packetOffset);
-                            dbgConnection('Read transfer id (%d)', xferId);
+                            dbgConnection('Continue - Read transfer id (%d)', xferId);
                             packetOffset += 4;
                             currentPacketTransfer = _.transfersIn[xferId];
                             if (!currentPacketTransfer)
@@ -382,9 +352,9 @@ var Connection = (function (_super) {
                 }
                 // Look for data to transfer
                 if (currentPacketTransfer) {
-                    dbgConnection('Continuing transfer id (%d) received (%d)', currentPacketTransfer.id, currentPacketTransfer._received);
                     // Take as much data from "data" as we can or until our length is satisfied
                     if (bytesRemainingInBuffer >= currentPacketBytesRemaining) {
+                        dbgConnection('Continuing transfer id (%d) received (%d) adding (%d) satisfied', currentPacketTransfer.id, currentPacketTransfer._received, currentPacketBytesRemaining);
                         // This may happen frequently with small transfer blocks
                         currentPacketTransfer.write(data.slice(packetOffset, packetOffset + currentPacketBytesRemaining));
                         packetOffset += currentPacketBytesRemaining;
@@ -395,6 +365,7 @@ var Connection = (function (_super) {
                         currentPacketFlags = 0;
                     }
                     else if (bytesRemainingInBuffer > 0) {
+                        dbgConnection('Continuing transfer id (%d) received (%d) adding (%d) unsatisfied', currentPacketTransfer.id, currentPacketTransfer._received, bytesRemainingInBuffer);
                         // This may happen frequently with really large transfer blocks
                         // Supply what we can
                         currentPacketTransfer.write(data.slice(packetOffset));
@@ -402,6 +373,7 @@ var Connection = (function (_super) {
                         break dataLoop;
                     }
                     else {
+                        dbgConnection('Continuing transfer id (%d) received (%d) WARNING No bytes provided?..', currentPacketTransfer.id, currentPacketTransfer._received);
                         break dataLoop;
                     }
                 }

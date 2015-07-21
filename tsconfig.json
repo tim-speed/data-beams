@@ -1,4 +1,5 @@
 {
+    "version": "1.4.1",
     "compilerOptions": {
         "outDir": "./dst/",
         "module": "commonjs",

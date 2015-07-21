@@ -10,32 +10,38 @@ export var MAX_SAFE_INT = 9007199254740991;
 export var MAX_UINT_32 = 0xFFFFFFFF;
 export var MAX_PACKET_SIZE = 0xFFFF; // 16 bit UINT MAX
 
+var EMPTY_BUFFER = new Buffer(0);
+
+var dbgArrayBufferedStream = debug('ArrayBufferedStream');
+
 export class ArrayBufferedStream extends stream.Readable implements NodeJS.WritableStream {
     // TODO: Use this as flow control so the buffer doesn't get too big
     writable: boolean;
-    allowSlicing: boolean;
 
     _ended: boolean;
     _received: number;
-    _data: NodeBuffer[];
-    _readLimit: number;
 
     constructor() {
-        super();
+        // Specify that this should buffer lots of data 4GB
+        super({
+            highWaterMark: MAX_UINT_32
+        });
 
         // By default buffer slicing is off so that we don't screw up message packets and so they don't have to measure their own length
-        this.allowSlicing = false;
         this.writable = true;
         this._ended = false;
         this._received = 0;
-        this._data = [];
-        this._readLimit = 0;
     }
 
     write(buffer: Buffer, cb?: Function): boolean;
     write(str: string, cb?: Function): boolean;
     write(str: string, encoding?: string, cb?: Function): boolean;
     write(data: string|Buffer, encodingOrCb?: Function|string, cb?: Function): boolean {
+        if (this._ended) {
+            cb && setImmediate(cb);
+            return;
+        }
+
         var encoding = 'utf8';
 
         if (typeof encodingOrCb === 'function') {
@@ -48,16 +54,17 @@ export class ArrayBufferedStream extends stream.Readable implements NodeJS.Writa
             data = new Buffer(<string>data, encoding);
         }
 
+        dbgArrayBufferedStream('Adding %d bytes of data', data.length);
 
-        this._data.push(<Buffer>data);
+        this.push(<Buffer>data);
         this._received += (<Buffer>data).length;
-        this._sendData();
 
         cb && setImmediate(cb);
 
         return true;
     }
 
+    // Ends the stream so no more data can be written to it or read from it beyond what has already been written to it
     end(): void;
     end(buffer: Buffer, cb?: Function): void;
     end(str: string, cb?: Function): void;
@@ -72,56 +79,15 @@ export class ArrayBufferedStream extends stream.Readable implements NodeJS.Writa
             this.write(<string>data, <string>encodingOrCb, cb);
         }
 
+        dbgArrayBufferedStream('Ending stream');
+
         this.writable = false;
         this._ended = true;
-        // Send any remaining data up to the amount specified by _read if we can
-        this._sendData();
-    }
-
-    _checkEnd(): boolean {
-        if (this._ended && this._data.length === 0) {
-            this.push(null);
-            return true;
-        }
-        return false;
-    }
-
-    _sendData() {
-        if (this._checkEnd()) {
-            return;
-        }
-
-        var read = 0;
-        var buffer: NodeBuffer;
-        var remaining = Math.max(this._readLimit, 0);
-
-        while (remaining && (buffer = this._data[0])) {
-            // TODO: Decide if we should push it all out as we are when slicing is disabled, or wait till remaining is >=
-            if (this.allowSlicing && buffer.length > remaining) {
-                // cut up the buffer and put the rest back in queue
-                this._data[0] = buffer.slice(remaining);
-                buffer = buffer.slice(0, remaining);
-            } else {
-                // Remove the buffer from the list
-                this._data.shift();
-            }
-
-            // Send this buffer
-            this.push(buffer);
-            read += buffer.length;
-
-            // Update the remaining amount of bytes we should read
-            remaining = this._readLimit - read;
-        }
-        // Update the read limit
-        this._readLimit -= read;
-
-        this._checkEnd();
+        this.push(null);
     }
 
     _read(size: number) {
-        this._readLimit = size;
-        this._sendData();
+        // Do nothing, this stream relies on the underlying readable, with an extremely high watermark
     }
 }
 
@@ -386,7 +352,7 @@ export class Connection extends events.EventEmitter {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
                                     // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
+                                    dbgConnection('Ack - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
                                     packetTrimmings = data.slice(packetOffset - 1);
                                 }
                                 break dataLoop;
@@ -394,7 +360,7 @@ export class Connection extends events.EventEmitter {
 
                             // Start our outbound transfer
                             xferId = data.readUInt32BE(packetOffset);
-                            dbgConnection('Read transfer id (%d)', xferId);
+                            dbgConnection('Ack - Read transfer id (%d)', xferId);
                             packetOffset += 4;
                             // This is the transfer id of a packet that we just sent
                             dbgConnection('Remote acknowledged our transfer (%d), starting...', xferId);
@@ -409,7 +375,7 @@ export class Connection extends events.EventEmitter {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
                                     // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
+                                    dbgConnection('End - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
                                     packetTrimmings = data.slice(packetOffset - 1);
                                 }
                                 break dataLoop;
@@ -417,7 +383,7 @@ export class Connection extends events.EventEmitter {
 
                             // End a running transfer
                             xferId = data.readUInt32BE(packetOffset);
-                            dbgConnection('Read transfer id (%d)', xferId);
+                            dbgConnection('End - Read transfer id (%d)', xferId);
                             packetOffset += 4;
                             // Grab and end the transger
                             xferIn = _.transfersIn[xferId];
@@ -434,7 +400,7 @@ export class Connection extends events.EventEmitter {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
                                     // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
+                                    dbgConnection('Continue - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
                                     packetTrimmings = data.slice(packetOffset - 1);
                                 }
                                 break dataLoop;
@@ -442,7 +408,7 @@ export class Connection extends events.EventEmitter {
 
                             // Handle incoming packet data for transfer
                             xferId = data.readUInt32BE(packetOffset);
-                            dbgConnection('Read transfer id (%d)', xferId);
+                            dbgConnection('Continue - Read transfer id (%d)', xferId);
                             packetOffset += 4;
                             currentPacketTransfer = _.transfersIn[xferId];
                             if (!currentPacketTransfer)
@@ -470,9 +436,9 @@ export class Connection extends events.EventEmitter {
 
                 // Look for data to transfer
                 if (currentPacketTransfer) {
-                    dbgConnection('Continuing transfer id (%d) received (%d)', currentPacketTransfer.id, currentPacketTransfer._received);
                     // Take as much data from "data" as we can or until our length is satisfied
                     if (bytesRemainingInBuffer >= currentPacketBytesRemaining) {
+                        dbgConnection('Continuing transfer id (%d) received (%d) adding (%d) satisfied', currentPacketTransfer.id, currentPacketTransfer._received, currentPacketBytesRemaining);
                         // This may happen frequently with small transfer blocks
                         currentPacketTransfer.write(data.slice(packetOffset, packetOffset + currentPacketBytesRemaining));
                         packetOffset += currentPacketBytesRemaining;
@@ -482,6 +448,7 @@ export class Connection extends events.EventEmitter {
                         currentPacketLength = currentPacketBytesRemaining = 0;
                         currentPacketFlags = 0;
                     } else if (bytesRemainingInBuffer > 0) {
+                        dbgConnection('Continuing transfer id (%d) received (%d) adding (%d) unsatisfied', currentPacketTransfer.id, currentPacketTransfer._received, bytesRemainingInBuffer);
                         // This may happen frequently with really large transfer blocks
                         // Supply what we can
                         currentPacketTransfer.write(data.slice(packetOffset));
@@ -489,6 +456,7 @@ export class Connection extends events.EventEmitter {
                         // Maxed out buffer, continue at next packet
                         break dataLoop;
                     } else {
+                        dbgConnection('Continuing transfer id (%d) received (%d) WARNING No bytes provided?..', currentPacketTransfer.id, currentPacketTransfer._received);
                         // There are no bytes left in this buffer, but we may still be expecting some
                         // this happens when headers are sent ahead of their data, so they aren't buffered together
                         // By breaking early before the packet trimming handler we preserve the current packet length

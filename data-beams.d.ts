@@ -8,11 +8,8 @@ declare module "data-beams" {
     export var MAX_PACKET_SIZE: number;
     export class ArrayBufferedStream extends stream.Readable implements NodeJS.WritableStream {
         writable: boolean;
-        allowSlicing: boolean;
         _ended: boolean;
         _received: number;
-        _data: NodeBuffer[];
-        _readLimit: number;
         constructor();
         write(buffer: Buffer, cb?: Function): boolean;
         write(str: string, cb?: Function): boolean;
@@ -21,8 +18,6 @@ declare module "data-beams" {
         end(buffer: Buffer, cb?: Function): void;
         end(str: string, cb?: Function): void;
         end(str: string, encoding?: string, cb?: Function): void;
-        _checkEnd(): boolean;
-        _sendData(): void;
         _read(size: number): void;
     }
     export class TransferIn extends ArrayBufferedStream {

@@ -7,11 +7,8 @@ export declare var MAX_UINT_32: number;
 export declare var MAX_PACKET_SIZE: number;
 export declare class ArrayBufferedStream extends stream.Readable implements NodeJS.WritableStream {
     writable: boolean;
-    allowSlicing: boolean;
     _ended: boolean;
     _received: number;
-    _data: NodeBuffer[];
-    _readLimit: number;
     constructor();
     write(buffer: Buffer, cb?: Function): boolean;
     write(str: string, cb?: Function): boolean;
@@ -20,8 +17,6 @@ export declare class ArrayBufferedStream extends stream.Readable implements Node
     end(buffer: Buffer, cb?: Function): void;
     end(str: string, cb?: Function): void;
     end(str: string, encoding?: string, cb?: Function): void;
-    _checkEnd(): boolean;
-    _sendData(): void;
     _read(size: number): void;
 }
 export declare class TransferIn extends ArrayBufferedStream {

@@ -1,6 +1,6 @@
 {
   "name": "data-beams",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Simple node based data transfer Server / Client",
   "main": "dst/index.js",
   "scripts": {
