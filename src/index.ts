@@ -8,7 +8,7 @@ var debug = require('./debug');
 
 export var MAX_SAFE_INT = 9007199254740991;
 export var MAX_UINT_32 = 0xFFFFFFFF;
-export var MAX_PACKET_SIZE = 0xFFFF; // 16 bit UINT MAX
+export var MAX_PACKET_SIZE = 1400; // 1500 is the max ethernet mtu, 1400 gives us enough room for underlying protocols and our headers to avoid packet loss and corruption
 
 var EMPTY_BUFFER = new Buffer(0);
 
@@ -351,9 +351,9 @@ export class Connection extends events.EventEmitter {
                             if (bytesRemainingInBuffer < 4) {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
-                                    // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Ack - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
-                                    packetTrimmings = data.slice(packetOffset - 1);
+                                    // Store the header trimmings, we will re-resolve this flag tree base on currentPacketFlags var storage
+                                    dbgConnection('Ack - Storing packet trimmings, %d bytes', bytesRemainingInBuffer);
+                                    packetTrimmings = data.slice(packetOffset);
                                 }
                                 break dataLoop;
                             }
@@ -374,9 +374,9 @@ export class Connection extends events.EventEmitter {
                             if (bytesRemainingInBuffer < 4) {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
-                                    // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('End - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
-                                    packetTrimmings = data.slice(packetOffset - 1);
+                                    // Store the header trimmings, we will re-resolve this flag tree base on currentPacketFlags var storage
+                                    dbgConnection('End - Storing packet trimmings, %d bytes', bytesRemainingInBuffer);
+                                    packetTrimmings = data.slice(packetOffset);
                                 }
                                 break dataLoop;
                             }
@@ -399,9 +399,9 @@ export class Connection extends events.EventEmitter {
                             if (bytesRemainingInBuffer < 6) {
                                 // Trim off whats left of the packet and wait for more
                                 if (bytesRemainingInBuffer > 0) {
-                                    // Subtract one from offset for the flags, because we will need to reconsume them
-                                    dbgConnection('Continue - Storing packet trimmings, %d bytes', bytesRemainingInBuffer - 1);
-                                    packetTrimmings = data.slice(packetOffset - 1);
+                                    // Store the header trimmings, we will re-resolve this flag tree base on currentPacketFlags var storage
+                                    dbgConnection('Continue - Storing packet trimmings, %d bytes', bytesRemainingInBuffer);
+                                    packetTrimmings = data.slice(packetOffset);
                                 }
                                 break dataLoop;
                             }
