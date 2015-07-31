@@ -56,7 +56,6 @@ export declare class Connection extends events.EventEmitter {
     transfersOut: TransferOut[];
     queuedTransfers: TransferOut[];
     _xferOutStartHeader: NodeBuffer;
-    _xferOutEndHeader: NodeBuffer;
     constructor(socket: net.Socket, id?: number, connected?: boolean);
     _queueTransfer(transfer: TransferOut): void;
     sendStream(stream: stream.Readable): StreamingTransferOut;

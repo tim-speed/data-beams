@@ -78,8 +78,6 @@ var TransferIn = (function (_super) {
     return TransferIn;
 })(ArrayBufferedStream);
 exports.TransferIn = TransferIn;
-var XFerOutHeader = new Buffer(7);
-XFerOutHeader.writeUInt8(16 /* Continue */, 0);
 var dbgTransferOut = debug('TransferOut');
 var TransferOut = (function (_super) {
     __extends(TransferOut, _super);
@@ -94,17 +92,17 @@ var TransferOut = (function (_super) {
         dbgTransferOut('Started outbound transfer %d', id);
     };
     TransferOut.prototype.sendData = function (buffer, cb) {
-        var _ = this;
-        setImmediate(function sendData() {
-            dbgTransferOut('Continuing outbound transfer %d, sending %d bytes.', _.id, buffer.length);
-            // Write transfer id
-            XFerOutHeader.writeUInt32BE(_.id, 1);
-            // Write packet length
-            XFerOutHeader.writeUInt16BE(buffer.length, 5);
-            _.socket.write(XFerOutHeader);
-            _.socket.write(buffer);
-            cb && cb();
-        });
+        dbgTransferOut('Continuing outbound transfer %d, sending %d bytes.', this.id, buffer.length);
+        var outBuffer = new Buffer(7 + buffer.length);
+        // Write flags
+        outBuffer.writeUInt8(16 /* Continue */, 0);
+        // Write transfer id
+        outBuffer.writeUInt32BE(this.id, 1);
+        // Write packet length
+        outBuffer.writeUInt16BE(buffer.length, 5);
+        // Write out buffer
+        buffer.copy(outBuffer, 7, 0, buffer.length);
+        this.socket.write(outBuffer, cb);
     };
     TransferOut.prototype.transfer = function () {
         throw new Error('transfer() not yet implemented in derived class of TransferOut!');
@@ -219,10 +217,6 @@ var Connection = (function (_super) {
         // 0b00010000 : Transfer error? (NYI)
         // 0b00000000 : Normal transfer continuation
         this._xferOutStartHeader.writeUInt8(128 /* Start */, 0);
-        this._xferOutEndHeader = new Buffer(5);
-        // 0b00100000 : Transfer end
-        this._xferOutEndHeader.writeUInt8(32 /* End */, 0);
-        // The last 4 bytes are overwritten by the transfer id of a transfer we need to end
         var _ = this;
         // Bind to process data-packets
         var packetInTransit = false;
@@ -410,8 +404,10 @@ var Connection = (function (_super) {
             _.transfersOut.splice(_.transfersOut.indexOf(transfer), 1);
             transfer.removeListener('complete', onComplete);
             // Send a response saying the transfer has ended
-            _._xferOutEndHeader.writeUInt32BE(transfer.id, 1);
-            this.socket.write(_._xferOutEndHeader);
+            var outBuffer = new Buffer(5);
+            outBuffer.writeUInt8(32 /* End */, 0);
+            outBuffer.writeUInt32BE(transfer.id, 1);
+            this.socket.write(outBuffer);
         });
         this.queuedTransfers.push(transfer);
         // Write out a message indicating there is a new transfer ready to be received
