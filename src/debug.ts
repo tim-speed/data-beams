@@ -40,7 +40,7 @@ function BuildDebug(typeOrInstance: Object): (message: string, ...args: any[]) =
                 }
             });
 
-            outArgs = [header + '%s\x1b[39m ' + message, callerName].concat(args);
+            outArgs = ['DBG-' + (new Date()).toISOString() + header + '%s\x1b[39m ' + message, callerName].concat(args);
 
             console.log.apply(console, outArgs);
         }

@@ -40,6 +40,7 @@ export declare class StreamingTransferOut extends TransferOut {
     _packetsPushed: number;
     _packetsSent: number;
     _ended: boolean;
+    _complete: boolean;
     constructor(stream: stream.Readable);
     transfer(): void;
 }

@@ -167,7 +167,7 @@ export class BufferTransferOut extends TransferOut {
                 sent++;
                 if (sent === started) {
                     _.emit('complete');
-                    dbgTransferOut('Completed outbound transfer %d.', _.id);
+                    dbgTransferOut('Buffer Sent - Completed outbound transfer %d.', _.id);
                 }
             });
             started++;
@@ -183,6 +183,7 @@ export class StreamingTransferOut extends TransferOut {
     _packetsPushed: number;
     _packetsSent: number;
     _ended: boolean;
+    _complete: boolean;
 
     constructor(stream: stream.Readable) {
         super();
@@ -191,26 +192,29 @@ export class StreamingTransferOut extends TransferOut {
         this._packetsPushed = 0;
         this._packetsSent = 0;
         this._ended = false;
+        this._complete = false;
     }
 
     transfer() {
         var _ = this;
         _.stream.resume();
         function onData(data: NodeBuffer) {
-            _._packetsPushed++;
             var outData = data;
             while (outData.length) {
                 // Split into parts based on the max packet size
                 var bytesInPart = Math.min(outData.length, MAX_PACKET_SIZE);
                 var part = outData.slice(0, bytesInPart);
+                _._packetsPushed++;
                 // Update outData for next iteration
                 outData = outData.slice(bytesInPart);
                 // Send the part
                 _.sendData(part, function completeCheck() {
                     _._packetsSent++;
-                    if (_._ended && _._packetsPushed === _._packetsSent) {
+                    // TODO: Figure out what this is for... the end handler should be what handles this
+                    if (!_._complete && _._ended && _._packetsPushed === _._packetsSent) {
+                        _._complete = true;
                         _.emit('complete');
-                        dbgTransferOut('Completed outbound transfer %d.', _.id);
+                        dbgTransferOut('Stream Ended Before End - Completed outbound transfer %d.', _.id);
                     }
                 });
             }
@@ -220,9 +224,10 @@ export class StreamingTransferOut extends TransferOut {
             // All done!
             _.stream.removeListener('data', onData);
             _._ended = true;
-            if (_._packetsPushed === _._packetsSent) {
+            if (!_._complete && _._packetsPushed === _._packetsSent) {
+                _._complete = true;
                 _.emit('complete');
-                dbgTransferOut('Completed outbound transfer %d.', _.id);
+                dbgTransferOut('Stream End - Completed outbound transfer %d.', _.id);
             }
         });
     }
@@ -413,7 +418,9 @@ export class Connection extends events.EventEmitter {
                         }
                         default: {
                             dbgConnection('Error, invalid packet flags: %d', currentPacketFlags);
-                            throw new Error('Error, invalid packet flags: ' + currentPacketFlags);
+                            currentPacketFlags = 0;
+                            // TODO: Send error
+                            //throw new Error('Error, invalid packet flags: ' + currentPacketFlags);
                             break;
                         }
                     }
@@ -474,9 +481,11 @@ export class Connection extends events.EventEmitter {
 
         // Bubble events:
         socket.on('error', function onError(error: Error) {
+            dbgConnection('Socket error: %s', error);
             _.emit('error', error);
         });
         socket.on('close', function onClose(hadError: boolean) {
+            dbgConnection('Socket to %s:%d closed - hadError:%d', _.remoteAddress, _.remotePort, (hadError && 1) || 0);
             _.connected = false;
             _.emit('close', hadError);
         });
@@ -590,10 +599,14 @@ export class Client extends Connection {
         this.port = port || 1337;
 
         // Start clients
-        super(net.connect(this.port, this.address, function onConnected() {
+        var socket = net.connect(this.port, this.address, function onConnected() {
             _.connected = true;
+            _.remoteAddress = socket.remoteAddress;
+            _.remotePort = socket.remotePort;
+            _.remoteFamily = socket.remoteFamily;
             _.emit('connected', _);
-        }));
+        });
+        super(socket);
 
         // TODO: Consider auto-reconnecting on close?
     }
